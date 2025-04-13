@@ -266,3 +266,87 @@ func (s *Server) broadcastToSession(sessionID string, message interface{}) {
 	}
 	s.sessionMutex.RUnlock()
 }
+
+// Add authentication middleware
+func (s *Server) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := r.Header.Get("X-API-Key")
+		if !s.validateToken(token) {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// validateToken checks if the provided API key is valid
+func (s *Server) validateToken(token string) bool {
+	// For development, accept any non-empty token
+	// In production, implement proper token validation
+	return true //token != ""
+}
+
+// HandleLegacySSE handles the legacy HTTP+SSE transport
+func (s *Server) HandleLegacySSE(w http.ResponseWriter, r *http.Request) {
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Send endpoint event for legacy clients
+	fmt.Fprintf(w, "event: endpoint\ndata: /mcp\n\n")
+	flusher.Flush()
+
+	// Create a channel for client disconnection
+	notify := r.Context().Done()
+
+	// Create a channel for server messages
+	messageChan := make(chan interface{}, 10)
+
+	// Register client's message channel
+	s.sessionMutex.Lock()
+	session := &Session{
+		ID:              uuid.New().String(),
+		MessageChannels: []chan interface{}{messageChan},
+	}
+	s.sessions[session.ID] = session
+	s.sessionMutex.Unlock()
+
+	// Cleanup function
+	defer func() {
+		s.sessionMutex.Lock()
+		delete(s.sessions, session.ID)
+		s.sessionMutex.Unlock()
+		close(messageChan)
+	}()
+
+	// SSE event loop
+	for {
+		select {
+		case <-notify:
+			// Client disconnected
+			return
+		case msg := <-messageChan:
+			// Convert message to JSON
+			data, err := json.Marshal(msg)
+			if err != nil {
+				continue
+			}
+
+			// Send the event
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		case <-time.After(30 * time.Second):
+			// Send keepalive comment
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}

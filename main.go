@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,18 +16,39 @@ func main() {
 	// Create and configure MCP server
 	mcpServer := mcp.NewServer()
 
-	// MCP endpoint
-	router.HandleFunc("/mcp", mcpServer.HandleMCP)
+	// MCP endpoint with authentication middleware
+	// New MCP endpoint
+	router.HandleFunc("/mcp", mcpServer.AuthMiddleware(mcpServer.HandleMCP))
+
+	// Legacy SSE endpoint for backward compatibility
+	router.HandleFunc("/sse", mcpServer.AuthMiddleware(mcpServer.HandleLegacySSE))
 
 	// Regular web server endpoints
 	router.HandleFunc("/", handleHome)
 	router.HandleFunc("/health", handleHealth)
 
-	// Start server
-	port := ":8080"
-	fmt.Printf("Server starting on port %s...\n", port)
-	if err := http.ListenAndServe(port, router); err != nil {
-		log.Fatalf("Server failed to start: %v", err)
+	// Start HTTP server
+	go func() {
+		log.Printf("HTTP server starting on port 8080...\n")
+		if err := http.ListenAndServe(":8080", router); err != nil {
+			log.Printf("HTTP server error: %v\n", err)
+		}
+	}()
+
+	// Start HTTPS server
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	httpsServer := &http.Server{
+		Addr:      ":8443",
+		Handler:   router,
+		TLSConfig: tlsConfig,
+	}
+
+	log.Printf("HTTPS server starting on port 8443...\n")
+	if err := httpsServer.ListenAndServeTLS("cert.pem", "key.pem"); err != nil {
+		log.Fatalf("HTTPS server error: %v", err)
 	}
 }
 
