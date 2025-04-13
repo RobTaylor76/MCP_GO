@@ -43,3 +43,16 @@ type Session struct {
 	MessageChannels []chan interface{}
 	// Add other session-specific data as needed
 }
+
+// CancellationParams represents the parameters for a cancellation notification
+type CancellationParams struct {
+	RequestID string `json:"requestId"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// CancellationNotification represents a cancellation notification
+type CancellationNotification struct {
+	Version string             `json:"jsonrpc"`
+	Method  string             `json:"method"`
+	Params  CancellationParams `json:"params"`
+}

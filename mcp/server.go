@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,14 +13,17 @@ import (
 
 // Server represents an MCP server instance
 type Server struct {
-	sessions     map[string]*Session
-	sessionMutex sync.RWMutex
+	sessions       map[string]*Session
+	sessionMutex   sync.RWMutex
+	activeRequests map[string]context.CancelFunc
+	requestMutex   sync.RWMutex
 }
 
 // NewServer creates a new MCP server instance
 func NewServer() *Server {
 	return &Server{
-		sessions: make(map[string]*Session),
+		sessions:       make(map[string]*Session),
+		activeRequests: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -205,8 +209,38 @@ func (s *Server) isValidOrigin(origin string) bool {
 }
 
 func (s *Server) processRequest(w http.ResponseWriter, r *http.Request, req *Request) {
+	// Create a cancellable context for this request
+	//	ctx, cancel := context.WithCancel(r.Context())
+	//	defer cancel()
+
+	// Store the cancel function
+	//	s.requestMutex.Lock()
+	//	s.activeRequests[req.ID.(string)] = cancel
+	//	s.requestMutex.Unlock()
+
+	// Clean up the request when done
+	//	defer func() {
+	//		s.requestMutex.Lock()
+	//		delete(s.activeRequests, req.ID.(string))
+	//		s.requestMutex.Unlock()
+	//	}()
+
 	var response Response
 
+	// Check if this is a cancellation notification
+	if req.Method == "notifications/cancelled" {
+		var cancelParams CancellationParams
+		if err := json.Unmarshal(req.Params, &cancelParams); err == nil {
+			s.handleCancellation(&CancellationNotification{
+				Version: req.Version,
+				Method:  req.Method,
+				Params:  cancelParams,
+			})
+			return
+		}
+	}
+
+	// Handle other requests as before
 	switch req.Method {
 	case "tools/list":
 		response = s.handleToolsList(req)
@@ -225,7 +259,14 @@ func (s *Server) processRequest(w http.ResponseWriter, r *http.Request, req *Req
 		}
 	}
 
+	// Check if the request was cancelled before sending response
+	//	select {
+	//		case <-ctx.Done():
+	//		// Request was cancelled, don't send response
+	//		return
+	//	default:
 	s.sendResponse(w, response)
+	//	}
 }
 
 func (s *Server) sendError(w http.ResponseWriter, err *ErrorResponse) {
@@ -349,4 +390,34 @@ func (s *Server) HandleLegacySSE(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// handlePing handles ping requests
+func (s *Server) handlePing(req *Request) Response {
+	return Response{
+		JSONRPC: JSONRPC{
+			Version: "2.0",
+			ID:      req.ID,
+		},
+		Result: s.marshalJSON(struct{}{}), // Empty result as per spec
+	}
+}
+
+// handleCancellation handles cancellation notifications
+func (s *Server) handleCancellation(notification *CancellationNotification) {
+	s.requestMutex.Lock()
+	defer s.requestMutex.Unlock()
+
+	// Get the cancel function for this request
+	cancel, exists := s.activeRequests[notification.Params.RequestID]
+	if !exists {
+		// Request not found or already completed
+		return
+	}
+
+	// Cancel the request
+	cancel()
+
+	// Remove from active requests
+	delete(s.activeRequests, notification.Params.RequestID)
 }

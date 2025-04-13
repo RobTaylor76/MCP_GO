@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -87,7 +88,8 @@ func (s *Server) handleToolCall(req *Request) Response {
 
 	// Handle get_weather tool
 	if toolReq.Name == "get_weather" {
-		return s.handleWeatherTool(req.ID, toolReq.Arguments)
+		//	return s.handleWeatherTool(req.Context(), req.ID, toolReq.Arguments)
+		return s.handleWeatherTool(context.Background(), req.ID, toolReq.Arguments)
 	}
 
 	return Response{
@@ -103,7 +105,7 @@ func (s *Server) handleToolCall(req *Request) Response {
 }
 
 // handleWeatherTool handles the get_weather tool execution
-func (s *Server) handleWeatherTool(reqID any, args json.RawMessage) Response {
+func (s *Server) handleWeatherTool(ctx context.Context, reqID any, args json.RawMessage) Response {
 	var weatherArgs WeatherArgs
 	if err := json.Unmarshal(args, &weatherArgs); err != nil {
 		return Response{
@@ -123,8 +125,27 @@ func (s *Server) handleWeatherTool(reqID any, args json.RawMessage) Response {
 		}
 	}
 
-	// For this example, we'll return mock weather data
-	// In a real implementation, you would call a weather API here
+	// Simulate a long-running operation that can be cancelled
+	// select {
+	// case <-ctx.Done():
+	// Request was cancelled
+	//	return Response{
+	//		JSONRPC: JSONRPC{
+	//			Version: "2.0",
+	//			ID:      reqID,
+	//		},
+	//		Result: s.marshalJSON(ToolResult{
+	//			Content: []ContentItem{
+	//				{
+	//					Type: "text",
+	//					Text: "Weather request cancelled",
+	//				},
+	//			},
+	//			IsError: true,
+	//		}),
+	//	}
+	// case <-time.After(2 * time.Second): // Simulate API delay
+	// Return mock weather data
 	result := ToolResult{
 		Content: []ContentItem{
 			{
@@ -142,4 +163,5 @@ func (s *Server) handleWeatherTool(reqID any, args json.RawMessage) Response {
 		},
 		Result: s.marshalJSON(result),
 	}
+
 }
