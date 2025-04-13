@@ -227,8 +227,9 @@ func (s *Server) processRequest(w http.ResponseWriter, r *http.Request, req *Req
 
 	var response Response
 
-	// Check if this is a cancellation notification
-	if req.Method == "notifications/cancelled" {
+	// Handle other requests as before
+	switch req.Method {
+	case "notifications/cancelled":
 		var cancelParams CancellationParams
 		if err := json.Unmarshal(req.Params, &cancelParams); err == nil {
 			s.handleCancellation(&CancellationNotification{
@@ -238,10 +239,8 @@ func (s *Server) processRequest(w http.ResponseWriter, r *http.Request, req *Req
 			})
 			return
 		}
-	}
-
-	// Handle other requests as before
-	switch req.Method {
+	case "ping":
+		response = s.handlePing(req)
 	case "tools/list":
 		response = s.handleToolsList(req)
 	case "tools/call":
@@ -258,6 +257,8 @@ func (s *Server) processRequest(w http.ResponseWriter, r *http.Request, req *Req
 			},
 		}
 	}
+
+	// add error hndler?
 
 	// Check if the request was cancelled before sending response
 	//	select {
